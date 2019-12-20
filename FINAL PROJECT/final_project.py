@@ -4,14 +4,13 @@ import re
 import datetime
 import sqlite3
 import time
-import datetime
 import pytemperature
-import pprint
 import plotly.express as px
 import plotly.graph_objs as go
 
 # pip install ipywidgets
 # install plotly
+# pip install statsmodels 
 # install pytemperature
 
 
@@ -24,7 +23,7 @@ class API_ACCESS():
 
         # find library or thing that grabs this automatically from url
         self.headers = {
-            'Cookie': "um_cookie_consent=na; gwlob=on; cosign-mprint=790Xlm5y-IXI-W0ynvlDSAgXCwOTr3iueZPxOiKBUCrnpMdwvlcb8O-2hxSbqjC78RHOzpCgOllKitMEpo1E3qJ3T8PL67FHlUmCljZQ3y5VkIopBfSR1OdWewx4/1576191380"
+            'Cookie': "um_cookie_consent=na; gwlob=on; cosign-mprint=MmExz8waPWJqiufl2QXekZ-xj3ceQ3gzMrqL4LtdHURqK6TeItUbqCKbJQKXfzpvKXoKFLkvqX8s13MuxTlN-wi3Nv1wAwwgO6JnJns5m8bbdZB6tuBvu65LLgdc/1576807496"
         }
         self.all_jobs = []
         self.db = "SI_FINAL_DB.db"
@@ -81,6 +80,10 @@ class API_ACCESS():
 
 
     def get_print_data(self, url):
+        ''' Requests data from the Mprint API along with the 
+        get_weather_data function and extracts the necessary 
+        information into the database'''
+
         r = requests.get(url, headers=self.headers)
         request_dict = json.loads(r.text) # And then load it into a dictionary
 
@@ -93,6 +96,7 @@ class API_ACCESS():
 
         for queue in sub_queues:
             jobs_queue = queue["jobs"]
+            # goes through all the printer queues
             for job in jobs_queue:   
                 # this limits the amount of inserts in a database to 20. 
                 if(self.counter == 20):
@@ -111,8 +115,6 @@ class API_ACCESS():
                     currentWeekDay = parsedDate.weekday()
 
                     job_tuple = (job["id"], creation_date, currentWeekDay, building_id)
-
-                    # (current_time_stamp, temperature, weather_id, weather)
                     weather_tup = self.get_weather_data()
 
                     conn = sqlite3.connect(self.db)
@@ -142,6 +144,7 @@ class API_ACCESS():
 
 
     def insert_into_print_table(self):
+        ''' insert data into prints table '''
         conn = sqlite3.connect(self.db)
         cur = conn.cursor()
 
@@ -153,39 +156,10 @@ class API_ACCESS():
         conn.commit()
         conn.close()
 
-    # this function should happen outside the for loop
-    # we don't use this function, but it was a backup
-    # to store the results just in case. 
-    # def insert_into_results_table(self):
-    #     conn = sqlite3.connect(self.db)
-    #     cur = conn.cursor()
 
 
-    #     cur.execute(""" CREATE TABLE IF NOT EXISTS temp_results(
-    #         temp INTEGER PRIMARY KEY,
-    #         num_prints INTEGER,
-    #         num_days_involved INTEGER);""")
-
-
-    #     cur.execute(""" DELETE FROM temp_results;""")
-
-
-    #     temp_inst = cur.execute(""" select temp, count(temp), count(distinct dayOfWeek)
-    #         from prints p left join tempInstance t on p.print_id = t.print_id
-    #         group by temp; """,).fetchall()
-
-
-    #     for i in temp_inst:
-    #         cur.execute(''' INSERT INTO temp_results (temp, num_prints, num_days_involved) 
-    #                         VALUES (?,?,?);''', 
-    #                         (i[0], i[1], i[2],))
-
-    #     conn.commit()
-    #     conn.close()
-
-
-        # this function should happen outside the for loop
     def calculation_table1(self):
+        ''' calculates the data and visual for avg prints/hour by temperature'''
         conn = sqlite3.connect(self.db)
         cur = conn.cursor()
 
@@ -208,8 +182,8 @@ class API_ACCESS():
 
         master_dict = {}
 
+        # calculates the avg. number of prints by hour
         for i in temp:
-
             # if the temp is equal to the current temp and its the same day
             if temperature == i[2] and day == i[0]:
                     match = re.search(r'\d{2}:\d{2}:\d{2}', i[1])
@@ -232,8 +206,6 @@ class API_ACCESS():
 
                     num_prints += 1
                     hours = last_date - first_date
-
-
             else:
                 # print(temperature)
                 if temperature in master_dict:
@@ -260,14 +232,14 @@ class API_ACCESS():
         y_axis = []
         x_axis = []
 
+        # We are using 30 mintutes a an estimation threshold. 
+        # if we recoreded data for less than 30 minutes, 
+        # then we can't assume the number of prints
+        # for example, if there were 10 prints in a second of recording, 
+        # we cant assume that theres gonna be 3600 prints per hour. --> highly unrealistic.
+        # however, if we recoreded for more than 30 minutes,
+        # it is SAFER to assume the rate at which prints are made per hour. 
         for k, v in master_dict.items():
-            # We are using 30 mintutes a an estimation threshold. 
-            # if we recoreded data for less than 30 minutes, 
-            # then we can't assume the number of prints
-            # for example, if there were 10 prints in a second of recording, 
-            # we cant assume that theres gonna be 3600 prints per hour. --> highly unrealistic.
-            # however, if we recoreded for more than 30 minutes,
-            # it is SAFER to assume the rate at which prints are made per hour. 
             if(v[1] > 0.5):
                 v[0] /= v[1]
             del v[-1]
@@ -276,21 +248,8 @@ class API_ACCESS():
             y_axis.append(v[0])
             x_axis.append(k)
 
-
-        # pp = pprint.PrettyPrinter(indent=4)
-        # pp.pprint(master_dict)
-
-        data = [go.Scatter(
-            x=x_axis,
-            y=y_axis,
-            marker={
-                'color': y_axis,
-                'colorscale': 'Magma'
-            }
-        )]
-
-        fig = go.FigureWidget(data=data)
-        # fig = px.scatter(x=x_axis, y=y_axis)
+        # create plotly scatter graph
+        fig = px.scatter(x=x_axis, y=y_axis, trendline="ols")
         fig.update_layout(
             title="Average Number of Prints/Hour by Temperature",
             xaxis_title="Temperature in Degrees Fahrenheit",
@@ -298,7 +257,7 @@ class API_ACCESS():
         )
         fig.show()
 
-
+        # writes to calculations file
         with open("Calculations.txt", "w") as f:
             f.write("TEMPERATURE, AVG. NUMBER OF PRINTS PER HOUR\n")
             for k, v in master_dict.items():
@@ -312,6 +271,7 @@ class API_ACCESS():
 
 
     def calculation_table2(self):
+        ''' calculates the data and visual for avg prints/hour by ugli floor'''
         conn = sqlite3.connect(self.db)
         cur = conn.cursor()
 
@@ -331,6 +291,7 @@ class API_ACCESS():
 
         master_dict = {}
 
+        # calculates the avg. number of prints by hour
         for i in temp:
             # if the temp is equal to the current temp and its the same day
             if day == i[0] and building == i[2]:
@@ -410,9 +371,7 @@ class API_ACCESS():
         conn.commit()
         conn.close()
 
-        pp = pprint.PrettyPrinter(indent=4)
-        pp.pprint(master_dict)
-
+        # writes to calculations file
         with open("Calculations.txt", "a") as f:
             f.write("UGLI FLOOR, AVG. NUMBER OF PRINTS PER HOUR\n")
             for k, v in master_dict.items():
@@ -444,6 +403,7 @@ class API_ACCESS():
 
 
     def calculation_table3(self):
+        ''' calculates the data and visual for avg prints/hour by weather condition'''
         conn = sqlite3.connect(self.db)
         cur = conn.cursor()
 
@@ -463,6 +423,7 @@ class API_ACCESS():
 
         master_dict = {}
 
+        #calculate average prints/hour
         for i in temp:
             # if the temp is equal to the current temp and its the same day
             if day == i[0] and building_weather == i[2]:
@@ -540,9 +501,6 @@ class API_ACCESS():
         conn.commit()
         conn.close()
 
-        pp = pprint.PrettyPrinter(indent=4)
-        pp.pprint(master_dict)
-
         with open("Calculations.txt", "a") as f:
             f.write("WEATHER CONDITION, AVG. NUMBER OF PRINTS PER HOUR\n")
             for k, v in master_dict.items():
@@ -574,7 +532,7 @@ class API_ACCESS():
 
     
 
-
+# This is our schema
 
 # CREATE TABLE buildings(
 #     buildingId TEXT PRIMARY KEY,
@@ -609,45 +567,33 @@ class API_ACCESS():
 #     num_days_involved INTEGER
 # );
 
-# 15-60 degrees
-
-# select temp, count(temp), count(distinct dayOfWeek)
-# from prints p left join tempInstance t on p.print_id = t.print_id
-# group by temp;
-
-
-
-
-
-
-
 
 
 
 
 def main():
     iteration = 0
-    # calls the api and inserts in database for one minute. 
-    # run = API_ACCESS()
-    # while iteration <= 10:
-    #     print("ITERATION: ")
-    #     print(iteration)
-    #     print("\n")
-    #     
-    #     # this accounts fo the fact that the 20 insert limit can be 
-    #     # biased to the first api call. 
-    #     # if (iteration % 2 == 0):
-    #     #     run.get_print_data(run.url1)
-    #     #     run.get_print_data(run.url2)
-    #     # else:
-    #     #     run.get_print_data(run.url2)
-    #     #     run.get_print_data(run.url1)
-
-    #     run.insert_into_print_table()
-    #     time.sleep(6)
-    #     iteration += 1
-
     run = API_ACCESS()
+
+    # calls the api and inserts in database for one minute. 
+    while iteration < 10:
+        print("ITERATION: ")
+        print(iteration)
+        print("\n")
+        
+        # this accounts fo the fact that the 20 insert limit can be 
+        # biased to the first api call. 
+        if (iteration % 2 == 0):
+            run.get_print_data(run.url1)
+            run.get_print_data(run.url2)
+        else:
+            run.get_print_data(run.url2)
+            run.get_print_data(run.url1)
+
+        run.insert_into_print_table()
+        time.sleep(6)
+        iteration += 1
+
     print("CALCULATION 1:")
     run.calculation_table1()
     print("CALCULATION 2:")
@@ -655,8 +601,6 @@ def main():
     print("CALCULATION 3:")
     run.calculation_table3()
 
-
-    # run.insert_into_results_table()
 
 if __name__ == "__main__":
     main()
